@@ -1,3 +1,6 @@
+## Finding Breakpoints in NERR Project Data
+## Author: Emily Adler
+
 setwd("~/Documents/School/NERRSData")
 library(tidyverse)
 library(BreakPoints)
