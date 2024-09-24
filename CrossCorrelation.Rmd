@@ -1,0 +1,74 @@
+---
+title: "CrossCorrelation"
+author: "Bennett McAfee"
+date: "2024-09-09"
+output: html_document
+---
+
+# Data Loading and Reformatting
+```{r}
+library(tidyverse)
+
+sites <- c("GRB", "RKB", "SOS", "NIW", "GTM", "CBM", "PDB")
+wq_vars <- c("temp_median", "spcond_median", "sal_median", "do_mgl_median", "ph_median", "turb_median")
+nut_vars <- c("po4f", "nh4f", "no2f", "no3f", "no23f", "chla_n")
+
+dirs <- list.dirs("C:/Users/benne/Documents/RStudio Workspace/NERR Synthesis/Catalyst Project Data", recursive = FALSE)
+dirs <- dirs[basename(dirs) %in% sites]
+
+for (i in 1:length(dirs)){
+  dir <- dirs[i]
+  wq_data <- read_csv(paste0(dir, "/wq_", tolower(basename(dir)), ".csv"), show_col_types = FALSE)
+  
+  if (i == 1){
+    all_data_long_wq <- wq_data
+  }else{
+    all_data_long_wq <- rbind(all_data_long_wq, wq_data)
+  }
+}
+
+all_data_long_wq$date <- make_date(year = all_data_long_wq$year, month = all_data_long_wq$month)
+all_data_long_wq <- all_data_long_wq %>% select(station, date, all_of(wq_vars)) %>% pivot_longer(cols = wq_vars, names_to = "variable")
+
+for (i in 1:length(dirs)){
+  dir <- dirs[i]
+  nut_data <- read_csv(paste0(dir, "/nut_", tolower(basename(dir)), ".csv"), show_col_types = FALSE)
+  
+  if (i == 1){
+    all_data_long_nut <- nut_data
+  }else{
+    all_data_long_nut <- rbind(all_data_long_nut, nut_data)
+  }
+}
+
+all_data_long_nut$date <- make_date(year = all_data_long_nut$year, month = all_data_long_nut$month)
+all_data_long_nut <- all_data_long_nut %>% select(station, date, all_of(nut_vars)) %>% pivot_longer(cols = nut_vars, names_to = "variable")
+
+all_data_long <- rbind(all_data_long_nut, all_data_long_wq)
+
+all_data_long$station <- paste0(substr(all_data_long$station, 1, 3), "_", substr(all_data_long$station, 4, 5))
+
+```
+
+# Cross-Correlation Analysis
+```{r}
+library(corrplot)
+
+for (var in unique(all_data_long$variable)){
+  data <- all_data_long %>% filter(variable == var)
+  data_wide <- data %>% pivot_wider(names_from = station, values_from = value) %>% select(-variable, -date)
+  #approx(x = 1:nrow(data_wide), y = data_wide$grbgbwq, xout = 1:nrow(data_wide), rule = 2)$y
+  
+  pdf(file = paste0("figures/", var, ".pdf"))
+  corrplot(cor(data_wide, use = "pairwise.complete.obs"), type = "upper", method = "square")
+  mtext(var, at=5, line=-20, cex=2)
+  dev.off()
+}
+```
+
+
+
+
+
+
+
