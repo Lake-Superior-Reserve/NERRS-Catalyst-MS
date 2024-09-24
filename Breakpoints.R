@@ -1,11 +1,17 @@
 ## Finding Breakpoints in NERR Project Data
-## Author: Emily Adler
+## Author: Emily Adler, with edits from Bennett McAfee
 
-setwd("~/Documents/School/NERRSData")
+setwd(dirname(rstudioapi::getSourceEditorContext()$path))
 library(tidyverse)
 library(BreakPoints)
 
-reserveFiles <- list.dirs(path = ".", full.names = TRUE, recursive = FALSE)
+#reserveFiles <- list.dirs(path = ".", full.names = TRUE, recursive = FALSE)
+#data_list <- list()
+
+sites <- c("GRB", "RKB", "SOS", "NIW", "GTM", "CBM", "PDB")
+reserveFiles <- list.dirs(paste0(getwd(), "/Catalyst Project Data"), recursive = FALSE)
+reserveFiles <- reserveFiles[basename(reserveFiles) %in% sites]
+
 data_list <- list()
 
 for (reserve in reserveFiles) {
@@ -223,7 +229,7 @@ library(RColorBrewer)
 
 
 
-###############MET BREAKPOITNS#################
+###############MET BREAKPOINTS#################
 #Run breakpresults_df <- data.frame(site = character(),
 met_breakpoint_df <- data.frame(site = character(),
                                 station = character(),
@@ -319,22 +325,29 @@ c25 <- c(
 )
 
 
-ggplot(met_breakpoint_df[met_breakpoint_df$dpvalue <= 0.05 ,], aes(x = variable, y = breaks, shape = test_type, color = station_number)) +
+ggplot(met_breakpoint_df[met_breakpoint_df$pvalue <= 0.05 ,], aes(x = variable, y = breaks, shape = test_type, color = station_number)) +
   geom_point() +
   facet_wrap(~site) +
   scale_color_manual(values = c(c25)) +  
-  labs(title = "meteorological breaks", shape = "Test Type")
+  labs(title = "meteorological breaks", shape = "Test Type")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 
+ggsave("figures/breakpoints/met_breapoints.png")
 
 ggplot(nut_breakpoint_df[nut_breakpoint_df$pvalue <= 0.05 ,], aes(x = variable, y = breaks, color = as.factor(station_number), shape = test_type)) +
   geom_point() +
   facet_wrap(~site) +
   scale_color_manual(values = c(c25)) + 
-  labs(title = "nutrient breaks", color = "Station Number", shape = "Test Type")
+  labs(title = "nutrient breaks", color = "Station Number", shape = "Test Type")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+ggsave("figures/breakpoints/nut_breapoints.png")
 
 ggplot(wq_breakpoint_df[wq_breakpoint_df$pvalue <= 0.05 ,], aes(x = variable, y = breaks, color = as.factor(station_number), shape = test_type)) +
   geom_point() +
   facet_wrap(~site) +
   scale_color_manual(values = c(c25)) +   
-  labs(title = "water quality breaks", color = "Station Number", shape = "Test Type")
+  labs(title = "water quality breaks", color = "Station Number", shape = "Test Type")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 
+ggsave("figures/breakpoints/wq_breapoints.png")
