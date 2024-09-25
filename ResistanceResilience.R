@@ -12,7 +12,7 @@ rm(list = ls()[!ls() %in% c("data_list", "met_breakpoint_df", "nut_breakpoint_df
 
 
 # Defining Resistance and Resilience
-## Calculations are based on Orwin & Wardle (2004, Soil Biology & Biochemistry: https://doi.org/10.1016/j.soilbio.2004.04.036)
+## Calculations are based on Orwin & Wardle (2004, Soil Biology & Biochemistry: https://doi.org/10.1016/j.soilbio.2004.04.036 )
 
 ### d0 = the difference from the control and the parameter after disturbance
 ### c0 = the control, a representation of antecedent conditions
@@ -33,7 +33,7 @@ resilience <- function(d0, dx){
 ### c_lookback = the size of the lookback window to be averaged to determine the antecedent conditions before the breakpoint (in timesteps)
 ### x = the number of timesteps after the breakpoint to measure resilience
 resril <- function(series, breakpoint, c_lookback, x){
-  c0 <- mean(series[(breakpoint-1)-c_looback], na.rm = TRUE)
+  c0 <- mean(series[(breakpoint-1)-c_lookback], na.rm = TRUE)
   d0 <- series[breakpoint] - c0
   dx <- series[breakpoint+x] - c0
   
@@ -45,6 +45,19 @@ resril <- function(series, breakpoint, c_lookback, x){
   return(output)
 }
 
+
+n_bp <- nrow(met_breakpoint_df) + nrow(nut_breakpoint_df) + nrow(wq_breakpoint_df)
+row_analyzed <- 0
+
+res_df <- data.frame(site = character(),
+                     station = character(),
+                     variable = character(),
+                     testtype = character(),
+                     breakpoint = numeric(),
+                     breakpoint_pval = numeric(),
+                     breakpoint_yearfrac = numeric(),
+                     resistance = numeric(),
+                     resilience = numeric())
 
 # Finding the resistance and resilience in the time series
 for(varcat in c("met", "nut", "wq")){
@@ -60,22 +73,40 @@ for(varcat in c("met", "nut", "wq")){
     data <- data_list[[which(names(data_list) == paste0(site, "_", varcat, "_", tolower(site), ".csv"))]]
     breakpoint_yearfrac <- data$yearfrac[breakpoint]
     
-    # TO DO: Time series decomposition, according to Thayne et al. (2021, Limnology & Oceanography: https://doi.org/10.1002/lno.11859)
-    ## This section is a WIP
+    row_analyzed <- row_analyzed + 1
+    cat("\r", "Analyzing ", row_analyzed, " of ", n_bp, ": ", site, " ", var)
+    
+    # Time series decomposition
     
     ts_original <- ts(data = data[[var]], frequency = 12) # requires trend package
     ts_original[which(is.na(ts_original))] <- mean(ts_original,na.rm=TRUE)
     ts_decomp <- decompose(ts_original)
     
-    # TO DO: Calculate resistance and resilience in the detrended time series using the breakpoint as the disturbance event
+    # Calculate resistance and resilience in the de-seasoned time series using the breakpoint as the disturbance event
+    ## Inspired by Thayne et al. (2021, Limnology & Oceanography: https://doi.org/10.1002/lno.11859 )
     
-    # TO DO: Save the resistance and resiliance to a data frame along with the general information gathered above
+    res <- resril(series = ts_decomp$trend, #trend removes the seasonal component, limiting the influence of time-of-year
+                  breakpoint = breakpoint,
+                  c_lookback = 3, # 3-month lookback window to determine antecedent conditions was chosen arbitrarily
+                  x = 3) # Looking 3 months into the future to measure resilience was also chosen arbitrarily.
+    
+    # Thayne et al. calculated the point at which resilience in measure dynamically based on when the "parameter under observation had returned to antecedent conditions", which seems antethetical to Orwin (2004) who made the index.
+    
+    tmp_df <- data.frame(site = site,
+                         station = station,
+                         variable = var,
+                         testtype = testtype,
+                         breakpoint = breakpoint,
+                         breakpoint_pval = breakpoint_pval,
+                         breakpoint_yearfrac = breakpoint_yearfrac,
+                         resistance = res[[1]],
+                         resilience = res[[2]])
+    res_df <- rbind(res_df, tmp_df)
     
   }
 }
   
 # TO DO: plot the resistance and resilience values calculated
-  
   
   
   
