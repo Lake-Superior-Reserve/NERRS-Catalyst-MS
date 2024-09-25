@@ -145,7 +145,7 @@ library(RColorBrewer)
 
 
 
-###############NUT BREAKPOITNS#################
+###############NUT BREAKPOINTS#################
 #Run breakpresults_df <- data.frame(site = character(),
 nut_breakpoint_df <- data.frame(site = character(),
                                station = character(),
