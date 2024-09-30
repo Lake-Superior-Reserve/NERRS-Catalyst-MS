@@ -9,6 +9,7 @@ library(trend) # may also be used for detrending
 # Collecting the data and breakpoints
 source("Breakpoints.R")
 rm(list = ls()[!ls() %in% c("data_list", "met_breakpoint_df", "nut_breakpoint_df", "wq_breakpoint_df")])
+gc()
 
 
 # Defining Resistance and Resilience
@@ -51,6 +52,7 @@ row_analyzed <- 0
 
 res_df <- data.frame(site = character(),
                      station = character(),
+                     station_number = numeric(),
                      variable = character(),
                      testtype = character(),
                      breakpoint = numeric(),
@@ -66,6 +68,7 @@ for(varcat in c("met", "nut", "wq")){
     # Gathering general information
     site <- bp_info[[i, "site"]]
     station <- bp_info[[i, "station"]]
+    station_number <- bp_info[[i, "station_number"]]
     var <- bp_info[[i, "variable"]]
     testtype <- bp_info[[i, "test_type"]]
     breakpoint <- bp_info[[i, "breaks"]]
@@ -74,7 +77,7 @@ for(varcat in c("met", "nut", "wq")){
     breakpoint_yearfrac <- data$yearfrac[breakpoint]
     
     row_analyzed <- row_analyzed + 1
-    cat("\r", "Analyzing ", row_analyzed, " of ", n_bp, ": ", site, " ", var)
+    cat("\r", "Analyzing", row_analyzed, "of", n_bp, "-", site, var)
     
     # Time series decomposition
     
@@ -87,13 +90,14 @@ for(varcat in c("met", "nut", "wq")){
     
     res <- resril(series = ts_decomp$trend, #trend removes the seasonal component, limiting the influence of time-of-year
                   breakpoint = breakpoint,
-                  c_lookback = 3, # 3-month lookback window to determine antecedent conditions was chosen arbitrarily
+                  c_lookback = 6, # 6-month lookback window to determine antecedent conditions was chosen arbitrarily
                   x = 3) # Looking 3 months into the future to measure resilience was also chosen arbitrarily.
     
     # Thayne et al. calculated the point at which resilience in measure dynamically based on when the "parameter under observation had returned to antecedent conditions", which seems antethetical to Orwin (2004) who made the index.
     
     tmp_df <- data.frame(site = site,
                          station = station,
+                         station_number = station_number,
                          variable = var,
                          testtype = testtype,
                          breakpoint = breakpoint,
@@ -106,15 +110,25 @@ for(varcat in c("met", "nut", "wq")){
   }
 }
   
-# TO DO: plot the resistance and resilience values calculated
+# Visualize the findings
+ggplot(res_df[res_df$breakpoint_pval <= 0.05,], aes(x = variable, y = resistance))+
+  geom_boxplot()+
+  geom_jitter(aes(color = site, shape = as.factor(station_number)), width = 0.2)+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  labs(title = "Resistance by variable", x = "Variable", y = "Resistance", shape = "Station Number", color = "Site")
+
+ggsave("figures/resistance/resistance_by_variable.png", width = 11, height = 8.5, units = "in")
+
+ggplot(res_df[res_df$breakpoint_pval <= 0.05,], aes(x = site, y = resistance))+
+  geom_boxplot()+
+  theme_bw()+
+  labs(title = "Resistance by site across all variables and stations", x = "Site", y = "Resistance")
+
+ggsave("figures/resistance/resistance_by_site.png")
   
-  
-  
-  
-  
-  
-  
-  
+# ggplot(res_df[res_df$breakpoint_pval <= 0.05,], aes(x = breakpoint_yearfrac, y = resistance))+
+#   geom_point(aes(color = variable))
   
   
   
