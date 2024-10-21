@@ -66,3 +66,8 @@ ggplot(hw.all, aes(x = duration)) +
 min.date = min(store$climatology$t)
 max.date = max(store$climatology$t)
 event_line(store, spread = 300, category = TRUE)
+
+
+
+## save the heatwaves dataframe ##
+write.csv(hw.all, "./Heatwaves/Heatwave results/NERR heatwave events 2024-10-21.csv", row.names = FALSE)
