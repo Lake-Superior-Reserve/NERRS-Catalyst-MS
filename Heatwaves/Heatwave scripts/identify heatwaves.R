@@ -19,16 +19,20 @@ for(i in 1:length(site_stations)){
   
   climOutput = ts2clm(cur.all.temp, climatologyPeriod = c(min(cur.all.temp$t), max(cur.all.temp$t)))
   hwOutput = detect_event(climOutput)$event
+  temp.data = climOutput
   
   store = detect_event(climOutput)
   
   hwOutput$site_station = cur.site.station
+  temp.data$site_station = cur.site.station
   
   if(i == 1){
     hw.all = hwOutput
+    temp.with.bounds = temp.data
   }
   if(i > 1){
     hw.all = rbind(hw.all, hwOutput)
+    temp.with.bounds = rbind(temp.data, temp.with.bounds)
   }
   
 }
