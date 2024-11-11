@@ -75,3 +75,4 @@ event_line(store, spread = 300, category = TRUE)
 
 ## save the heatwaves dataframe ##
 write.csv(hw.all, "./Heatwaves/Heatwave results/NERR heatwave events 2024-10-21.csv", row.names = FALSE)
+write.csv(temp.with.bounds, "./Heatwaves/Heatwave results/NERR heatwave temp thresholds 2024-11-08.csv", row.names = FALSE)
