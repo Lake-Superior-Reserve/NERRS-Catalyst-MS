@@ -416,7 +416,7 @@ all.temp = all.temp %>% mutate(site_station = paste(site, station, sep = "_"))
 
 site_stations = unique(all.temp$site_station)
 
-for(i in 28:60){
+for(i in 64:67){
   
   cur.site.station = site_stations[i]
   cur.all.temp = all.temp %>% filter(site_station == cur.site.station)
@@ -446,11 +446,11 @@ for(i in 28:60){
   
   climOutput.all$site_station = cur.site.station
   
-  if(i == 28){
+  if(i == 64){
     final.climOutput.temp = climOutput.all
   }
   
-  if(i > 28){
+  if(i > 64){
     final.climOutput.temp = rbind(final.climOutput.temp, climOutput.all)
   }
   
@@ -510,8 +510,40 @@ final.climOutput.temp = final.climOutput.temp %>%
 
 # save the temp dataframe of percentiles
 #write.csv(final.climOutput.temp, "./Catalyst Project Data/Formatted data DKS/seasonal percentiles of values/temp percentiles 1 to 27.csv", row.names = FALSE)
-write.csv(final.climOutput.temp, "./Catalyst Project Data/Formatted data DKS/seasonal percentiles of values/temp percentiles 28 to 60.csv", row.names = FALSE)
+#write.csv(final.climOutput.temp, "./Catalyst Project Data/Formatted data DKS/seasonal percentiles of values/temp percentiles 28 to 60.csv", row.names = FALSE)
+#write.csv(final.climOutput.temp, "./Catalyst Project Data/Formatted data DKS/seasonal percentiles of values/temp percentiles 61.csv", row.names = FALSE)
+#write.csv(final.climOutput.temp, "./Catalyst Project Data/Formatted data DKS/seasonal percentiles of values/temp percentiles 64 to 67.csv", row.names = FALSE)
 
 
 
 
+
+
+
+
+
+##### combine all of the percentiles into one dataframe
+temp.1 = read.csv("./Catalyst Project Data/Formatted data DKS/seasonal percentiles of values/temp percentiles 1 to 27.csv")
+temp.2 = read.csv("./Catalyst Project Data/Formatted data DKS/seasonal percentiles of values/temp percentiles 28 to 60.csv")
+temp.3 = read.csv("./Catalyst Project Data/Formatted data DKS/seasonal percentiles of values/temp percentiles 61.csv")
+temp.4 = read.csv("./Catalyst Project Data/Formatted data DKS/seasonal percentiles of values/temp percentiles 64 to 67.csv")
+
+do.1 = read.csv("./Catalyst Project Data/Formatted data DKS/seasonal percentiles of values/dissolved oxygen percentiles 1st 33 sites.csv")
+do.2 = read.csv("./Catalyst Project Data/Formatted data DKS/seasonal percentiles of values/dissolved oxygen percentiles 2st 34-59 sites.csv")
+do.3 = read.csv("./Catalyst Project Data/Formatted data DKS/seasonal percentiles of values/dissolved oxygen percentiles 2st 60-61 sites.csv")
+do.4 = read.csv("./Catalyst Project Data/Formatted data DKS/seasonal percentiles of values/dissolved oxygen percentiles 2st 63-67 sites.csv")
+
+temp.all = rbind(temp.1, temp.2, temp.3, temp.4)
+do.all = rbind(do.1, do.2, do.3, do.4)
+ph.all =  read.csv("./Catalyst Project Data/Formatted data DKS/seasonal percentiles of values/ph percentiles.csv")
+turb.all = read.csv("./Catalyst Project Data/Formatted data DKS/seasonal percentiles of values/turbidity percentiles.csv")
+
+df_list = list(temp.all, do.all, ph.all, turb.all)
+
+#test = full_join(temp.all, do.all, ph.all, turb.all, by = c("site_station", "doy", "t"))
+
+all.percentiles = reduce(df_list, full_join, by = c("site_station", "doy", "t"))
+unique(all.percentiles$site_station)
+
+
+write.csv(all.percentiles, "./Catalyst Project Data/Formatted data DKS/seasonal percentiles of values/ALL PERCENTILES COMBINED 2025-04-23.csv", row.names = FALSE)
