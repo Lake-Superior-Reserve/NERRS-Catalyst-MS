@@ -1,0 +1,12 @@
+name: viewer
+title:
+username: srblackburn
+account: srblackburn
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 14658067
+bundleId: 10212807
+url: https://srblackburn.shinyapps.io/viewer/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
