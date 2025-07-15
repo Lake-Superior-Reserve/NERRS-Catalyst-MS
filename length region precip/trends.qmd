@@ -20,11 +20,11 @@ library(ggrepel)
 library(dunn.test)
 
 
-wq_perc <- read_csv("Catalyst Project Data/percentiles/wq_perc.csv", show_col_types = FALSE)
-met_perc <- read_csv("Catalyst Project Data/percentiles/met_perc.csv", show_col_types = FALSE) %>% 
+wq_perc <- read_csv("../Catalyst Project Data/percentiles/wq_perc.csv", show_col_types = FALSE)
+met_perc <- read_csv("../Catalyst Project Data/percentiles/met_perc.csv", show_col_types = FALSE) %>% 
   inner_join(wq_perc, by = join_by(station, date)) # only keep rows with met AND wq data
 
-sites <- read_csv("sampling_stations.csv", show_col_types = FALSE) %>% 
+sites <- read_csv("../sampling_stations.csv", show_col_types = FALSE) %>% 
   mutate(station = str_sub(`Station Code`, 1, 5),
          State = str_to_lower(State)) %>% 
   group_by(station) %>% 
