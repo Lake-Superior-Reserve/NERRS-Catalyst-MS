@@ -24,6 +24,16 @@ wq_perc <- read_csv("../Catalyst Project Data/percentiles/wq_perc.csv", show_col
 met_perc <- read_csv("../Catalyst Project Data/percentiles/met_perc.csv", show_col_types = FALSE) %>% 
   inner_join(wq_perc, by = join_by(station, date)) # only keep rows with met AND wq data
 
+sal_sum <- wq_perc %>% 
+  summarise(sal = median(sal, na.rm = TRUE), .by = station) %>% 
+  mutate(salinity = case_when(sal < 5 ~ "0-5",
+                               sal < 15 ~ "5-15",
+                               sal < 25 ~ "15-25",
+                               sal > 25 ~ ">25",
+                               .default = NA),
+         salinity = factor(salinity, levels = c("0-5", "5-15", "15-25", ">25"))) %>% 
+  select(-sal)
+
 sites <- read_csv("../sampling_stations.csv", show_col_types = FALSE) %>% 
   mutate(station = str_sub(`Station Code`, 1, 5),
          State = str_to_lower(State)) %>% 
@@ -38,8 +48,8 @@ sites <- read_csv("../sampling_stations.csv", show_col_types = FALSE) %>%
                               region == 5 ~ "MW",
                               region == 6 ~ "WC",
                               .default = NA),
-           region = factor(region, levels = c("NE", "Mid","SE","PR","Gulf","MW","WC")))
-
+           region = factor(region, levels = c("NE", "Mid","SE","PR","Gulf","MW","WC"))) %>% 
+  left_join(sal_sum, by = join_by(station))
 
 
 add_heat_flags <- function(df){
@@ -77,10 +87,17 @@ add_heat_flags <- function(df){
       )
     )  %>%    # remove duplicate rows - prioritize wave, then post, then pre
     group_by(station) %>% 
-    mutate(dup = duplicated(date) | duplicated(date, fromLast = TRUE),
+    # need to split out duplicated by direction so that we don't remove rows twice if they are duplicate and both pre or both post
+    mutate(dup = duplicated(date),
            drop = dup & wave_block == "pre") %>% 
-    filter(!drop) %>% 
-    mutate(dup = duplicated(date) | duplicated(date, fromLast = TRUE),
+    filter(!drop) %>%
+    mutate(dup = duplicated(date, fromLast = TRUE),
+           drop = dup & wave_block == "pre") %>% 
+    filter(!drop) %>%
+    mutate(dup = duplicated(date),
+           drop = dup & wave_block == "post") %>% 
+    filter(!drop) %>%
+    mutate(dup = duplicated(date, fromLast = TRUE),
            drop = dup & wave_block == "post") %>% 
     filter(!drop) %>%
     ungroup() %>% 
@@ -107,6 +124,56 @@ add_heat_flags <- function(df){
 
 
 add_prcp_flags <- function(df){
+  
+  # label precip events that don't align with heatwave
+  # get list of precip event dates, length
+  prcp_df <- df %>%
+    arrange(station, date) %>%
+    mutate(prcp = totprcp_perc > 90 & is.na(wave_id),
+           prcp = replace_na(prcp, FALSE)) %>%
+    group_by(station) %>%
+    mutate(prcp_id = if_else(prcp & !lag(prcp),1L, 0L) %>% cumsum(),
+           prcp_id = if_else(prcp, prcp_id, NA)) %>%
+    filter(!is.na(prcp_id)) %>%
+    group_by(station, prcp_id) %>%
+    summarize(
+      prcp_start  = min(date),
+      prcp_end    = max(date),
+      prcp_length = n(),
+      .groups   = "drop"
+    ) 
+   # create df of dates surrounding/including each heatwave
+  windows_df_1 <- prcp_df %>%
+    mutate(
+      date = map2(prcp_start, prcp_end, ~ seq(.x - days(6), .y + days(3), by = "day"))
+    ) %>%
+    unnest(date) %>%
+    # add label to each date
+    mutate(
+      prcp_block = case_when(date <  prcp_start ~ "pre",
+                             date >= prcp_start & date <= prcp_end ~ "prcp",
+                             date >  prcp_end ~ "post",
+                             .default = NA
+      )
+    )  %>%    # remove duplicate rows - prioritize prcp, then post, then pre
+    group_by(station) %>% 
+    # need to split out duplicated by direction so that we don't remove rows twice if they are duplicate and both pre or both post
+    mutate(dup = duplicated(date),
+           drop = dup & prcp_block == "pre") %>% 
+    filter(!drop) %>%
+    mutate(dup = duplicated(date, fromLast = TRUE),
+           drop = dup & prcp_block == "pre") %>% 
+    filter(!drop) %>%
+    mutate(dup = duplicated(date),
+           drop = dup & prcp_block == "post") %>% 
+    filter(!drop) %>%
+    mutate(dup = duplicated(date, fromLast = TRUE),
+           drop = dup & prcp_block == "post") %>% 
+    filter(!drop) %>%
+    ungroup() %>% 
+    select(-c(dup, drop))
+  
+  # add precip labels for heatwaves
   df %>% 
     group_by(station, wave_id) %>% 
     mutate(prcp_pre = sum(wave_block == "pre"  & totprcp_perc > 90, na.rm = TRUE),
@@ -114,7 +181,8 @@ add_prcp_flags <- function(df){
            prcp_post = sum(wave_block == "post" & totprcp_perc > 90, na.rm = TRUE)
     ) %>% 
     ungroup() %>% 
-    mutate(across(c(prcp_pre, prcp_wave, prcp_post), ~if_else(is.na(wave_id), NA, .)))
+    mutate(across(c(prcp_pre, prcp_wave, prcp_post), ~if_else(is.na(wave_id), NA, .))) %>% 
+    left_join(windows_df_1, by = c("station","date"))
 }
 
 wq_prep <- add_heat_flags(wq_perc) 
@@ -180,13 +248,13 @@ plot_results_simple <- function(res, group = NULL, title = "Distribution of Diff
   p
 }
 
-plot_results_region <- function(res, group = NULL, title = "Distribution of Differences Between Groups"){
+plot_results_group <- function(res, slice, group = NULL, title = "Distribution of Differences Between Groups"){
   p <- res %>%
-    ggplot(aes(comp, diff, fill = region)) +
+    ggplot(aes(comp, diff, fill = {{slice}})) +
     geom_boxplot() +
     ylab("Percentile Difference Between Groups") +
     xlab(NULL) +
-    ggtitle(title) +
+    ggtitle(str_c(title, " - ", as_name(enquo(slice)))) +
     guides(fill = guide_legend(nrow = 1)) +
     theme_bw() +
     theme(legend.position = "bottom",
@@ -198,14 +266,14 @@ plot_results_region <- function(res, group = NULL, title = "Distribution of Diff
   p
 }
 
-plot_results_sig <- function(reg_res, group = NULL, title = "Significant Differences Between Groups"){
+plot_results_sig <- function(reg_res, slice, group = NULL, title = "Significant Differences Between Groups"){
   p <- reg_res %>% 
   mutate(scaled_pct_sig = ifelse(dir == "-", -pct_sig, pct_sig)) %>% 
-  ggplot(aes(x = comp, y = scaled_pct_sig, fill = region)) +
+  ggplot(aes(x = comp, y = scaled_pct_sig, fill = {{slice}})) +
   geom_col(position = position_dodge(), width = .5) +
   ylim(-100, 100) +
   labs(
-    title = title,
+    title = str_c(title, " - ", as_name(enquo(slice))),
     x = NULL,
     y = str_wrap("% of Stations with Sigificant Difference (sign = difference direction)", 40)
   ) +
@@ -219,17 +287,17 @@ plot_results_sig <- function(reg_res, group = NULL, title = "Significant Differe
   p
 }
 
-reg_pct_sig <- function(res, group = NULL){
+grp_pct_sig <- function(res, slice, group = NULL){
   res %>% 
     mutate(dir = if_else(diff > 0, "+", "-")) %>% 
-    group_by(region, {{group}}) %>% 
-    mutate(reg_count = n_distinct(station)) %>% 
+    group_by({{slice}}, {{group}}) %>% 
+    mutate(slice_count = n_distinct(station)) %>% 
     ungroup() %>% 
-    summarise(counttrue = sum(sig), reg_count = mean(reg_count), n = n(), .by = c(comp, {{group}}, dir, region)) %>%
-    mutate(pct_sig = round(counttrue/reg_count * 100)) %>%
-    select(-c(counttrue, reg_count, n)) %>%
+    summarise(counttrue = sum(sig), slice_count = mean(slice_count), n = n(), .by = c(comp, {{group}}, dir, {{slice}})) %>%
+    mutate(pct_sig = round(counttrue/slice_count * 100)) %>%
+    select(-c(counttrue, slice_count, n)) %>%
     filter(pct_sig > 0) %>%
-    arrange(region, comp, {{group}}, dir)
+    arrange({{slice}}, comp, {{group}}, dir)
 }
 
 ```
@@ -330,53 +398,69 @@ fix_labels_base <- function(res){
 - Drops during heatwaves
 - Stays lower post heatwave, though there is some rebound in SE and Gulf regions
 - Pattern is present across regions
+- No difference between salinity groups
 ```{r}
 do_res_base <- map(stations_base, check_diffs, wq_prep_base, "do_perc") %>% list_rbind() %>% fix_labels_base()
 
-do_reg_pct_sig_base <- reg_pct_sig(do_res_base)
+do_grp_pct_sig_base <- grp_pct_sig(do_res_base, region)
+do_sal_pct_sig_base <- grp_pct_sig(do_res_base, salinity)
 
 plot_results_simple(do_res_base)
-plot_results_region(do_res_base)
-plot_results_sig(do_reg_pct_sig_base)
+plot_results_group(do_res_base, region)
+plot_results_sig(do_grp_pct_sig_base, region)
+plot_results_group(do_res_base, salinity)
+plot_results_sig(do_sal_pct_sig_base, salinity)
 ```
 {{< pagebreak >}}
 ## pH
 - Slight drop in pH during heatwaves, particularly at Southern sites.
 - Only present during heatwaves, not post
+- No difference between salinity groups
 ```{r}
 ph_res_base <- map(stations_base, check_diffs, wq_prep_base, "ph_perc") %>% list_rbind() %>% fix_labels_base()
 
-ph_reg_pct_sig_base <- reg_pct_sig(ph_res_base)
+ph_grp_pct_sig_base <- grp_pct_sig(ph_res_base, region)
+ph_sal_pct_sig_base <- grp_pct_sig(ph_res_base, salinity)
 
 plot_results_simple(ph_res_base)
-plot_results_region(ph_res_base)
-plot_results_sig(ph_reg_pct_sig_base)
+plot_results_group(ph_res_base, region)
+plot_results_sig(ph_grp_pct_sig_base, region)
+plot_results_group(ph_res_base, salinity)
+plot_results_sig(ph_sal_pct_sig_base, salinity)
 ```
 {{< pagebreak >}}
 ## Conductivity
 - Conductivity increases during heatwaves in all regions, but some Gulf sites show decreases
 - Conductivity stays high post heatwave in all regions but Gulf 
+- Increases during and post wave in low and high salinity groups, but not moderate
 ```{r}
 cond_res_base <- map(stations_base, check_diffs, wq_prep_base, "cond_perc") %>% list_rbind() %>% fix_labels_base()
 
-cond_reg_pct_sig_base <- reg_pct_sig(cond_res_base)
+cond_grp_pct_sig_base <- grp_pct_sig(cond_res_base, region)
+cond_sal_pct_sig_base <- grp_pct_sig(cond_res_base, salinity)
 
 plot_results_simple(cond_res_base)
-plot_results_region(cond_res_base)
-plot_results_sig(cond_reg_pct_sig_base)
+plot_results_group(cond_res_base, region)
+plot_results_sig(cond_grp_pct_sig_base, region)
+plot_results_group(cond_res_base, salinity)
+plot_results_sig(cond_sal_pct_sig_base, salinity)
 ```
 {{< pagebreak >}}
 ## Turbidity
 - Turbidity increases post heatwave in all regions but SE
 - Turbidity decreases during heatwaves in NE, so the increase in turbidity post-heatwave just returns it to baseline
+- Increases post wave in all salinity groups but low
 ```{r}
 turb_res_base <- map(stations_base, check_diffs, wq_prep_base, "turb_perc") %>% list_rbind() %>% fix_labels_base()
 
-turb_reg_pct_sig_base <- reg_pct_sig(turb_res_base)
+turb_grp_pct_sig_base <- grp_pct_sig(turb_res_base, region)
+turb_sal_pct_sig_base <- grp_pct_sig(turb_res_base, salinity)
 
 plot_results_simple(turb_res_base)
-plot_results_region(turb_res_base)
-plot_results_sig(turb_reg_pct_sig_base)
+plot_results_group(turb_res_base, region)
+plot_results_sig(turb_grp_pct_sig_base, region)
+plot_results_group(turb_res_base, salinity)
+plot_results_sig(turb_sal_pct_sig_base, salinity)
 ```
 
 {{< pagebreak >}}
@@ -448,22 +532,41 @@ do_res_len %>%
 
 do_res_len %>% 
   filter(len %in% c("long", "med", "short")) %>% 
-  plot_results_region(len)
+  plot_results_group(region, len)
 
 # do_res_len %>% 
 #   filter(len %in% c("wave", "pre", "post")) %>% 
-#   plot_results_region(len)
+#   plot_results_group(region, len)
 
-do_reg_pct_sig_len <- do_res_len %>% 
-  reg_pct_sig(len)
+do_grp_pct_sig_len <- do_res_len %>% 
+  grp_pct_sig(region, len)
 
-do_reg_pct_sig_len %>% 
+do_grp_pct_sig_len %>% 
   filter(len %in% c("long", "med", "short")) %>% 
-  plot_results_sig(len)
+  plot_results_sig(region, len)
 
-# do_reg_pct_sig_len %>% 
+# do_grp_pct_sig_len %>% 
 #   filter(len %in% c("wave", "pre", "post")) %>% 
 #   plot_results_sig(len)
+
+do_res_len %>% 
+  filter(len %in% c("long", "med", "short")) %>% 
+  plot_results_group(salinity, len)
+
+# do_res_len %>% 
+#   filter(len %in% c("wave", "pre", "post")) %>% 
+#   plot_results_group(salinity, len)
+
+do_sal_pct_sig_len <- do_res_len %>% 
+  grp_pct_sig(salinity, len)
+
+do_sal_pct_sig_len %>% 
+  filter(len %in% c("long", "med", "short")) %>% 
+  plot_results_sig(salinity, len)
+
+# do_sal_pct_sig_len %>% 
+#   filter(len %in% c("wave", "pre", "post")) %>% 
+#   plot_results_sig(salinity, len)
 ```
 {{< pagebreak >}}
 ## pH
@@ -482,27 +585,47 @@ ph_res_len %>%
 
 ph_res_len %>% 
   filter(len %in% c("long", "med", "short")) %>% 
-  plot_results_region(len)
+  plot_results_group(region, len)
 
 # ph_res_len %>% 
 #   filter(len %in% c("wave", "pre", "post")) %>% 
-#   plot_results_region(len)
+#   plot_results_group(region, len)
 
-ph_reg_pct_sig_len <- ph_res_len %>% 
-  reg_pct_sig(len)
+ph_grp_pct_sig_len <- ph_res_len %>% 
+  grp_pct_sig(region, len)
 
-ph_reg_pct_sig_len %>% 
+ph_grp_pct_sig_len %>% 
   filter(len %in% c("long", "med", "short")) %>% 
-  plot_results_sig(len)
+  plot_results_sig(region, len)
 
-# ph_reg_pct_sig_len %>% 
+# ph_grp_pct_sig_len %>% 
 #   filter(len %in% c("wave", "pre", "post")) %>% 
 #   plot_results_sig(len)
+
+ph_res_len %>% 
+  filter(len %in% c("long", "med", "short")) %>% 
+  plot_results_group(salinity, len)
+
+# ph_res_len %>% 
+#   filter(len %in% c("wave", "pre", "post")) %>% 
+#   plot_results_group(salinity, len)
+
+ph_sal_pct_sig_len <- ph_res_len %>% 
+  grp_pct_sig(salinity, len)
+
+ph_sal_pct_sig_len %>% 
+  filter(len %in% c("long", "med", "short")) %>% 
+  plot_results_sig(salinity, len)
+
+# ph_sal_pct_sig_len %>% 
+#   filter(len %in% c("wave", "pre", "post")) %>% 
+#   plot_results_sig(salinity, len)
 ```
 {{< pagebreak >}}
 ## Conductivity
 - Conductivity is higher during and post short waves, except in Mid region where it is high during and post wave regardless of wave length.
 - In NE, higher during short and medium waves, but not high.
+- In low salinity sites, post heatwave increase persists across all heatwave lengths (fades with heatwave length for high salinities)
 ```{r}
 cond_res_len <- map(stations_len, check_diffs, wq_prep_len, "cond_perc") %>% list_rbind() %>% fix_labels_len()
 
@@ -516,28 +639,48 @@ cond_res_len %>%
 
 cond_res_len %>% 
   filter(len %in% c("long", "med", "short")) %>% 
-  plot_results_region(len)
+  plot_results_group(region, len)
 
 # cond_res_len %>% 
 #   filter(len %in% c("wave", "pre", "post")) %>% 
-#   plot_results_region(len)
+#   plot_results_group(region, len)
 
-cond_reg_pct_sig_len <- cond_res_len %>% 
-  reg_pct_sig(len)
+cond_grp_pct_sig_len <- cond_res_len %>% 
+  grp_pct_sig(region, len)
 
-cond_reg_pct_sig_len %>% 
+cond_grp_pct_sig_len %>% 
   filter(len %in% c("long", "med", "short")) %>% 
-  plot_results_sig(len)
+  plot_results_sig(region, len)
 
-# cond_reg_pct_sig_len %>% 
+# cond_grp_pct_sig_len %>% 
 #   filter(len %in% c("wave", "pre", "post")) %>% 
 #   plot_results_sig(len)
+
+cond_res_len %>% 
+  filter(len %in% c("long", "med", "short")) %>% 
+  plot_results_group(salinity, len)
+
+# cond_res_len %>% 
+#   filter(len %in% c("wave", "pre", "post")) %>% 
+#   plot_results_group(salinity, len)
+
+cond_sal_pct_sig_len <- cond_res_len %>% 
+  grp_pct_sig(salinity, len)
+
+cond_sal_pct_sig_len %>% 
+  filter(len %in% c("long", "med", "short")) %>% 
+  plot_results_sig(salinity, len)
+
+# cond_sal_pct_sig_len %>% 
+#   filter(len %in% c("wave", "pre", "post")) %>% 
+#   plot_results_sig(salinity, len)
 ```
 {{< pagebreak >}}
 ## Turbidity
 - Turbidity increase during and following heatwaves in most prominent in short waves
 - Gulf sites also show turbidity increase during and post medium waves
 - Some signs of turbidity decreasing during and post medium and long waves in most regions
+- Turbidity increase is strongest in medium salinity groups
 ```{r}
 turb_res_len <- map(stations_len, check_diffs, wq_prep_len, "turb_perc") %>% list_rbind() %>% fix_labels_len()
 
@@ -551,22 +694,41 @@ turb_res_len %>%
 
 turb_res_len %>% 
   filter(len %in% c("long", "med", "short")) %>% 
-  plot_results_region(len)
+  plot_results_group(region, len)
 
 # turb_res_len %>% 
 #   filter(len %in% c("wave", "pre", "post")) %>% 
-#   plot_results_region(len)
+#   plot_results_group(region, len)
 
-turb_reg_pct_sig_len <- turb_res_len %>% 
-  reg_pct_sig(len)
+turb_grp_pct_sig_len <- turb_res_len %>% 
+  grp_pct_sig(region, len)
 
-turb_reg_pct_sig_len %>% 
+turb_grp_pct_sig_len %>% 
   filter(len %in% c("long", "med", "short")) %>% 
-  plot_results_sig(len)
+  plot_results_sig(region, len)
 
-# turb_reg_pct_sig_len %>% 
+# turb_grp_pct_sig_len %>% 
 #   filter(len %in% c("wave", "pre", "post")) %>% 
 #   plot_results_sig(len)
+
+turb_res_len %>% 
+  filter(len %in% c("long", "med", "short")) %>% 
+  plot_results_group(salinity, len)
+
+# turb_res_len %>% 
+#   filter(len %in% c("wave", "pre", "post")) %>% 
+#   plot_results_group(salinity, len)
+
+turb_sal_pct_sig_len <- turb_res_len %>% 
+  grp_pct_sig(salinity, len)
+
+turb_sal_pct_sig_len %>% 
+  filter(len %in% c("long", "med", "short")) %>% 
+  plot_results_sig(salinity, len)
+
+# turb_sal_pct_sig_len %>% 
+#   filter(len %in% c("wave", "pre", "post")) %>% 
+#   plot_results_sig(salinity, len)
 ```
 
 {{< pagebreak >}}
@@ -646,22 +808,41 @@ do_res_prcp %>%
 
 do_res_prcp %>% 
   filter(is.na(prcp)) %>% 
-  plot_results_region()
+  plot_results_group(region)
 
 # do_res_prcp %>% 
 #   filter(!is.na(prcp)) %>% 
-#   plot_results_region()
+#   plot_results_group()
 
-do_reg_pct_sig_prcp <- do_res_prcp %>% 
-  reg_pct_sig(prcp)
+do_grp_pct_sig_prcp <- do_res_prcp %>% 
+  grp_pct_sig(region, prcp)
 
-do_reg_pct_sig_prcp %>% 
+do_grp_pct_sig_prcp %>% 
   filter(is.na(prcp)) %>% 
-  plot_results_sig()
+  plot_results_sig(region)
 
-# do_reg_pct_sig_prcp %>% 
+# do_grp_pct_sig_prcp %>% 
 #  filter(!is.na(prcp)) %>% 
-#   plot_results_sig()
+#   plot_results_sig(region)
+
+do_res_prcp %>% 
+  filter(is.na(prcp)) %>% 
+  plot_results_group(salinity)
+
+# do_res_prcp %>% 
+#   filter(!is.na(prcp)) %>% 
+#   plot_results_group(salinity)
+
+do_grp_pct_sig_prcp <- do_res_prcp %>% 
+  grp_pct_sig(salinity, prcp)
+
+do_grp_pct_sig_prcp %>% 
+  filter(is.na(prcp)) %>% 
+  plot_results_sig(salinity)
+
+# do_grp_pct_sig_prcp %>% 
+#  filter(!is.na(prcp)) %>% 
+#   plot_results_sig(salinity)
 ```
 {{< pagebreak >}}
 ## pH
@@ -669,6 +850,8 @@ do_reg_pct_sig_prcp %>%
 - Following heatwaves with extreme precipitation, pH rebounds in SE and Gulf
 - In Mid, pH increases during heatwaves without precip, but decreases during waves with precip
 - No clear sign that pH is different post-heatwave compared to pre-heatwave
+- pH increases during heatwaves without precip in moderate salinity sites, decreases during precip heatwaves
+- Decreases during all heatwaves at high salinity sites
 ```{r}
 ph_res_prcp <- map(stations_prcp, check_diffs, wq_prep_prcp, "ph_perc") %>% list_rbind() %>% fix_labels_prcp()
 
@@ -682,27 +865,48 @@ ph_res_prcp %>%
 
 ph_res_prcp %>% 
   filter(is.na(prcp)) %>% 
-  plot_results_region()
+  plot_results_group(region)
 
 # ph_res_prcp %>% 
 #   filter(!is.na(prcp)) %>% 
-#   plot_results_region()
+#   plot_results_group()
 
-ph_reg_pct_sig_prcp <- ph_res_prcp %>% 
-  reg_pct_sig(prcp)
+ph_grp_pct_sig_prcp <- ph_res_prcp %>% 
+  grp_pct_sig(region, prcp)
 
-ph_reg_pct_sig_prcp %>% 
+ph_grp_pct_sig_prcp %>% 
   filter(is.na(prcp)) %>% 
-  plot_results_sig()
+  plot_results_sig(region)
 
-# ph_reg_pct_sig_prcp %>% 
+# ph_grp_pct_sig_prcp %>% 
 #  filter(!is.na(prcp)) %>% 
-#   plot_results_sig()
+#   plot_results_sig(region)
+
+ph_res_prcp %>% 
+  filter(is.na(prcp)) %>% 
+  plot_results_group(salinity)
+
+# ph_res_prcp %>% 
+#   filter(!is.na(prcp)) %>% 
+#   plot_results_group(salinity)
+
+ph_grp_pct_sig_prcp <- ph_res_prcp %>% 
+  grp_pct_sig(salinity, prcp)
+
+ph_grp_pct_sig_prcp %>% 
+  filter(is.na(prcp)) %>% 
+  plot_results_sig(salinity)
+
+# ph_grp_pct_sig_prcp %>% 
+#  filter(!is.na(prcp)) %>% 
+#   plot_results_sig(salinity)
 ```
 {{< pagebreak >}}
 ## Conductivity
 - Conductivity is higher during and post heatwaves without large precipitation events in SE
 - Conductivity is lower during and post heatwaves with large precipitation events in NE and Mid
+- Non-precip heatwaves had increases in conductivity that were higher at high salinity sites
+- While conductivty dropped at lower and higher salinity sites during precip heatwaves, it still increased at moderate salinity sites (weird)
 ```{r}
 cond_res_prcp <- map(stations_prcp, check_diffs, wq_prep_prcp, "cond_perc") %>% list_rbind() %>% fix_labels_prcp()
 
@@ -716,27 +920,47 @@ cond_res_prcp %>%
 
 cond_res_prcp %>% 
   filter(is.na(prcp)) %>% 
-  plot_results_region()
+  plot_results_group(region)
 
 # cond_res_prcp %>% 
 #   filter(!is.na(prcp)) %>% 
-#   plot_results_region()
+#   plot_results_group()
 
-cond_reg_pct_sig_prcp <- cond_res_prcp %>% 
-  reg_pct_sig(prcp)
+cond_grp_pct_sig_prcp <- cond_res_prcp %>% 
+  grp_pct_sig(region, prcp)
 
-cond_reg_pct_sig_prcp %>% 
+cond_grp_pct_sig_prcp %>% 
   filter(is.na(prcp)) %>% 
-  plot_results_sig()
+  plot_results_sig(region)
 
-# cond_reg_pct_sig_prcp %>% 
+# cond_grp_pct_sig_prcp %>% 
 #  filter(!is.na(prcp)) %>% 
-#   plot_results_sig()
+#   plot_results_sig(region)
+
+cond_res_prcp %>% 
+  filter(is.na(prcp)) %>% 
+  plot_results_group(salinity)
+
+# cond_res_prcp %>% 
+#   filter(!is.na(prcp)) %>% 
+#   plot_results_group(salinity)
+
+cond_grp_pct_sig_prcp <- cond_res_prcp %>% 
+  grp_pct_sig(salinity, prcp)
+
+cond_grp_pct_sig_prcp %>% 
+  filter(is.na(prcp)) %>% 
+  plot_results_sig(salinity)
+
+# cond_grp_pct_sig_prcp %>% 
+#  filter(!is.na(prcp)) %>% 
+#   plot_results_sig(salinity)
 ```
 {{< pagebreak >}}
 ## Turbidity
-- Turbidity typically increases post heatwave from pre and heatwaves conditions.
+- Turbidity typically increases post heatwave from pre and heatwaves conditions when precip occurs
 - Turbidity can drop during heatwaves without large precipitation events in SE and Gulf regions
+- Moderate salinity group responds different to other groups; not dropping durings waves without precip and consistently increasing following heatwaves
 ```{r}
 turb_res_prcp <- map(stations_prcp, check_diffs, wq_prep_prcp, "turb_perc") %>% list_rbind() %>% fix_labels_prcp()
 
@@ -750,22 +974,161 @@ turb_res_prcp %>%
 
 turb_res_prcp %>% 
   filter(is.na(prcp)) %>% 
-  plot_results_region()
+  plot_results_group(region)
 
 # turb_res_prcp %>% 
 #   filter(!is.na(prcp)) %>% 
-#   plot_results_region()
+#   plot_results_group()
 
-turb_reg_pct_sig_prcp <- turb_res_prcp %>% 
-  reg_pct_sig(prcp)
+turb_grp_pct_sig_prcp <- turb_res_prcp %>% 
+  grp_pct_sig(region, prcp)
 
-turb_reg_pct_sig_prcp %>% 
+turb_grp_pct_sig_prcp %>% 
   filter(is.na(prcp)) %>% 
-  plot_results_sig()
+  plot_results_sig(region)
 
-# turb_reg_pct_sig_prcp %>% 
+# turb_grp_pct_sig_prcp %>% 
 #  filter(!is.na(prcp)) %>% 
-#   plot_results_sig()
+#   plot_results_sig(region)
+
+turb_res_prcp %>% 
+  filter(is.na(prcp)) %>% 
+  plot_results_group(salinity)
+
+# turb_res_prcp %>% 
+#   filter(!is.na(prcp)) %>% 
+#   plot_results_group(salinity)
+
+turb_grp_pct_sig_prcp <- turb_res_prcp %>% 
+  grp_pct_sig(salinity, prcp)
+
+turb_grp_pct_sig_prcp %>% 
+  filter(is.na(prcp)) %>% 
+  plot_results_sig(salinity)
+
+# turb_grp_pct_sig_prcp %>% 
+#  filter(!is.na(prcp)) %>% 
+#   plot_results_sig(salinity)
 ```
 
+{{< pagebreak >}}
+# Extreme Precipitation Events without Heatwaves
+I defined extreme precip events as any day with > 90th percentile total precipitation. I compared these days with 6 days pre-event and 3 days post event.
+```{r}
+met_prep_base <- met_prep %>% 
+  filter(station %in% station_count$station) %>% 
+  mutate(prcp_block = factor(prcp_block, levels = c("post", "prcp", "pre")))
 
+stations_base <- unique(met_prep_base$station)
+
+check_diffs_prcp <- function(station_name = "apaeb", data = met_prep, param = "watertemp_perc"){
+  
+  df <- data %>% 
+    filter(station == station_name) 
+  
+  if (all(is.na(df$prcp_block))) return(tibble_row(station = station_name, n = 0))
+  
+  nwaves <- df %>% 
+    summarise(.by = prcp_id) %>% 
+    nrow()
+  
+  predict_var <- df$prcp_block
+  response_var <- df[[param]]
+  
+  # kruskal_res <- kruskal.test(response_var ~ predict_var)
+  # 
+  # if (kruskal_res$p.value > 0.01) return(tibble_row(station = station_name, n = nwaves, sig = FALSE))
+  
+  sink("null") # silence output
+  dunn_res <- invisible(dunn.test(response_var, predict_var, kw = FALSE, table = FALSE))
+  sink()
+  
+  tibble(station = station_name, 
+         n = nwaves, 
+         comp = dunn_res$comparisons, 
+         diff = dunn_res$Z,
+         p = dunn_res$P.adjusted) %>% 
+    mutate(sig = p < 0.01) %>% 
+  return()
+}
+
+# fix labels to be more clear - number presented is how much parameter changes when moving from 1st to 2nd group
+fix_labels_base <- function(res){
+  res %>% 
+    mutate(comp = case_when(comp == "prcp - pre" ~ "pre -> prcp",
+                            comp == "post - prcp" ~ "prcp -> post",
+                            comp == "post - pre" ~ "pre -> post",
+                            .default = comp),
+           comp = factor(comp, levels = c("pre -> prcp", "prcp -> post", "pre -> post"))) %>% 
+    left_join(sites, by = join_by(station))
+}
+
+```
+
+## DO
+- Drops during precip events
+- Rebounds slightly post event
+- Pattern is present across regions
+- No difference between salinity groups
+```{r}
+do_res_base <- map(stations_base, check_diffs_prcp, met_prep_base, "do_perc") %>% list_rbind() %>% fix_labels_base()
+
+do_grp_pct_sig_base <- grp_pct_sig(do_res_base, region)
+do_sal_pct_sig_base <- grp_pct_sig(do_res_base, salinity)
+
+plot_results_simple(do_res_base)
+plot_results_group(do_res_base, region)
+plot_results_sig(do_grp_pct_sig_base, region)
+plot_results_group(do_res_base, salinity)
+plot_results_sig(do_sal_pct_sig_base, salinity)
+```
+{{< pagebreak >}}
+## pH
+- pH drops during and post precip events.
+- Pattern present across regions and salinity groups
+```{r}
+ph_res_base <- map(stations_base, check_diffs_prcp, met_prep_base, "ph_perc") %>% list_rbind() %>% fix_labels_base()
+
+ph_grp_pct_sig_base <- grp_pct_sig(ph_res_base, region)
+ph_sal_pct_sig_base <- grp_pct_sig(ph_res_base, salinity)
+
+plot_results_simple(ph_res_base)
+plot_results_group(ph_res_base, region)
+plot_results_sig(ph_grp_pct_sig_base, region)
+plot_results_group(ph_res_base, salinity)
+plot_results_sig(ph_sal_pct_sig_base, salinity)
+```
+{{< pagebreak >}}
+## Conductivity
+- Slight drop in conductivity during precip events
+- No change during precip events in gulf region
+- Big drop in conductivity during/post precip event in SE region/high salinity
+```{r}
+cond_res_base <- map(stations_base, check_diffs_prcp, met_prep_base, "cond_perc") %>% list_rbind() %>% fix_labels_base()
+
+cond_grp_pct_sig_base <- grp_pct_sig(cond_res_base, region)
+cond_sal_pct_sig_base <- grp_pct_sig(cond_res_base, salinity)
+
+plot_results_simple(cond_res_base)
+plot_results_group(cond_res_base, region)
+plot_results_sig(cond_grp_pct_sig_base, region)
+plot_results_group(cond_res_base, salinity)
+plot_results_sig(cond_sal_pct_sig_base, salinity)
+```
+{{< pagebreak >}}
+## Turbidity
+- Turbidity increases during precip events in all regions/salinity groups
+- Typically drops from during event to post event, but still remains higher post than pre
+- Moderate salinity group is not higher post event that pre, and the high salinity group has the weakest precip impact on turbidity
+```{r}
+turb_res_base <- map(stations_base, check_diffs_prcp, met_prep_base, "turb_perc") %>% list_rbind() %>% fix_labels_base()
+
+turb_grp_pct_sig_base <- grp_pct_sig(turb_res_base, region)
+turb_sal_pct_sig_base <- grp_pct_sig(turb_res_base, salinity)
+
+plot_results_simple(turb_res_base)
+plot_results_group(turb_res_base, region)
+plot_results_sig(turb_grp_pct_sig_base, region)
+plot_results_group(turb_res_base, salinity)
+plot_results_sig(turb_sal_pct_sig_base, salinity)
+```

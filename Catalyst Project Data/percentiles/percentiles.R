@@ -41,7 +41,7 @@ met_10yr <- met %>%
 wq_10yr <- wq %>% 
   drop_10yr() %>% 
   mutate(station = str_replace(station, "wq", "")) %>% 
-  select(station, date, watertemp = temp_mean, cond = spcond_mean, do = do_pct_mean, ph = ph_mean, turb = turb_mean)
+  select(station, date, watertemp = temp_mean, cond = spcond_mean, do = do_pct_mean, ph = ph_mean, turb = turb_mean, sal = sal_mean)
 
 rm(daily_files, met, wq)
 
@@ -90,7 +90,7 @@ clm_thresh_wrap <- function(site, df, col, res = 1) {
 
 
 clm_pct_wrap <- function(df, col, res = 1){
-  map(unique(df$station), clm_thresh_wrap, df, col, res) %>% 
+  map(unique(df$station), clm_thresh_wrap, df, col, res, .progress = TRUE) %>% 
     list_rbind()
 }
 
@@ -108,11 +108,13 @@ cond_perc <- clm_pct_wrap(wq_10yr, "cond")
 do_perc <- clm_pct_wrap(wq_10yr, "do")
 ph_perc <- clm_pct_wrap(wq_10yr, "ph")
 turb_perc <- clm_pct_wrap(wq_10yr, "turb")
+sal_perc <- clm_pct_wrap(wq_10yr, "sal")
 wq_perc <- full_join(watertemp_perc, cond_perc, by = join_by(station, date)) %>% 
   full_join(do_perc, by = join_by(station, date)) %>% 
   full_join(ph_perc, by = join_by(station, date)) %>% 
-  full_join(turb_perc, by = join_by(station, date))
-rm(watertemp_perc, cond_perc, do_perc, ph_perc, turb_perc)
+  full_join(turb_perc, by = join_by(station, date)) %>% 
+  full_join(sal_perc, by = join_by(station, date))
+rm(watertemp_perc, cond_perc, do_perc, ph_perc, turb_perc, sal_perc)
 
 
 write_csv(met_perc, "Catalyst Project Data/percentiles/met_perc.csv")
